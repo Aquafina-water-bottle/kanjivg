@@ -15,7 +15,7 @@ The project's documentation is at https://kanjivg.tagaini.net/.
 
 ## Changes to the original project:
 - Added a `gen_db.py` file to generate `decompositions.db`
-- Added a `search.py` file to search for kanjis within your Anki collection.
+- Added a `search.py` file to search for kanjis within your Anki collection. Requires AnkiConnect.
 - Renamed `kvg-lookup.py` to `kvg_lookup.py`, so it can be imported from other scripts
 - Cleaned up some of the existing python scripts so they can be easier read for me personally (`\t` -> 4 spaces, etc.)
 
