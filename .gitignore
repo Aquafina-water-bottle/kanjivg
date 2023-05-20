@@ -3,3 +3,11 @@ kanjivg.xml
 *.pyc
 kanjivg-*xml.gz
 kanjivg-*.zip
+
+build/
+kanji_freq/*/*.zip
+Session.vim
+decompositions.db
+notes.txt
+kanji_freq/aozora/
+kanji_freq/jpdb/
