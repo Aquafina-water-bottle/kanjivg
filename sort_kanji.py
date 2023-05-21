@@ -1,5 +1,5 @@
 import json
-from typing import TypedDict
+from typing import TypedDict, Iterable
 
 TMP = [
   "奈",
@@ -45,7 +45,7 @@ class Freq(TypedDict):
 FreqMap = dict[str, Freq]
 
 
-def sort_kanji(kanjis: list[str], freq_map: FreqMap):
+def sort_kanji(kanjis: Iterable[str], freq_map: FreqMap):
     return sorted(kanjis, key=lambda x: 10000 if x not in freq_map else freq_map[x]["value"])
 
 

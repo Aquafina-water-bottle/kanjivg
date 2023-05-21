@@ -124,7 +124,7 @@ def find_all_components(summary: dict[str, Any], ignore_element: bool=True) -> l
 
 def main():
     data: dict[str, KanjiData] = {}
-    combinations = defaultdict(list)
+    combinations = defaultdict(set)
 
     INSERT_ROW_SQL = "INSERT INTO kanjivg (element, decomposition, components, combinations) VALUES (?,?,?,?)"
 
@@ -148,7 +148,7 @@ def main():
 
                 components = find_all_components(summary)
                 for component in components:
-                    combinations[component].append(element)
+                    combinations[component].add(element)
 
                 data[element] = KanjiData(summary, components, [])
 
