@@ -1,32 +1,24 @@
 from kvg_lookup import canonicalId, readXmlFile
 from kanjivg import Kanji, StrokeGr, Stroke
 from sort_kanji import to_freq_map, sort_kanji
-from dataclasses import dataclass
+from util import json_to_str
+from kanji_data import KanjiData
+
 
 import json
 import sqlite3
+import argparse
 from typing import Any
 from collections import defaultdict
 
 # select * from decompositions where data like '%隷%'
 
 
-def json_to_str(j, indent=None):
-    return json.dumps(j, ensure_ascii=False, indent=indent)
-
-@dataclass
-class KanjiData:
-    decomposition: dict[str, Any]
-    components: list[str] # in
-    combinations: list[str] # out
-
-    def __repr__(self):
-        data = {
-            "decomposition": self.decomposition,
-            "components": self.components,
-            "combinations": self.combinations,
-        }
-        return json_to_str(data)
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sort-file", type=str, default=None)
+    parser.add_argument("--sort-file-is-freq-map", action="store_true")
+    return parser.parse_args()
 
 
 def json_summary(c: Kanji) -> dict[str, Any] | None:
@@ -122,21 +114,42 @@ def find_all_components(summary: dict[str, Any], ignore_element: bool=True) -> l
     return result
 
 
+def override_data(data):
+    OVERRIDE_FILE = "custom.json"
+    with open(OVERRIDE_FILE) as f:
+        json_data = json.load(f)
+    for key, value in json_data.items():
+        for column, col_val in value.items():
+            if column == "combinations":
+                data[key].combinations.extend(col_val)
+            else:
+                setattr(data[key], column, col_val)
+
+
 def main():
+    args = get_args()
     data: dict[str, KanjiData] = {}
     combinations = defaultdict(set)
 
     INSERT_ROW_SQL = "INSERT INTO kanjivg (element, decomposition, components, combinations) VALUES (?,?,?,?)"
 
     #with open("kanji_freq/jpdb/kanji_meta_bank_1.json") as f:
-    with open("kanji_freq/aozora/kanji_meta_bank_1.json") as f:
-        freq_list = json.load(f)
-    freq_map = to_freq_map(freq_list)
+    #with open("kanji_freq/aozora/kanji_meta_bank_1.json") as f:
+    if args.sort_file is None:
+        freq_map = {}
+    else:
+        with open(args.sort_file) as f:
+            freq_list = json.load(f)
+        if args.sort_file_is_freq_map:
+            freq_map = freq_list
+        else:
+            freq_map = to_freq_map(freq_list)
 
     with sqlite3.connect("kanjivg.db") as conn:
         init_table(conn)
         cur = conn.cursor()
 
+        # parse gigantic xml file containing all kanjis into summary and components
         files = readXmlFile("./kanjivg.xml")
         for key in files.keys():
             summary = find_xml(key, files)
@@ -147,17 +160,21 @@ def main():
                     continue
 
                 components = find_all_components(summary)
+                # backfills combinations
                 for component in components:
                     combinations[component].add(element)
 
                 data[element] = KanjiData(summary, components, [])
 
+        # sets combinations for each kanji
         for component, combs in combinations.items():
             if component not in data:
                 print(f"component {component} not in original data")
                 data[component] = KanjiData({}, [], [])
-            sorted_combinations = sort_kanji(combs, freq_map)
-            data[component].combinations = sorted_combinations
+            data[component].combinations = sort_kanji(combs, freq_map) if freq_map else combs
+
+        # reads custom.json to override any specific entries
+        override_data(data)
 
         for element, kanji_data in data.items():
             assert kanji_data.decomposition is not None

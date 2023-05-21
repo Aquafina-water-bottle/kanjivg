@@ -3,7 +3,8 @@ import sqlite3
 import argparse
 import urllib.request
 
-from gen_db import KanjiData, json_to_str
+from kanji_data import get_kanjivg_data
+from util import json_to_str
 from sort_kanji import to_freq_map
 
 
@@ -30,15 +31,10 @@ def get_args():
     parser.add_argument("kanji", type=str)
     parser.add_argument("-a", "--do-not-search-anki", action="store_true")
     parser.add_argument("-m", "--max", type=int, default=20)
+    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--sort-file", type=str, default="kanji_freq/aozora/kanji_meta_bank_1.json")
+    parser.add_argument("--sort-file-is-freq-map", action="store_true")
     return parser.parse_args()
-
-def get_kanjivg_data(cur, kanji):
-    SQL = "SELECT * FROM kanjivg WHERE element = ?"
-    data_list = cur.execute(SQL, kanji).fetchall()
-    if len(data_list) > 1:
-        print(f"Found more than one entry in kanjivg for {kanji}?")
-    data = data_list[0]
-    return KanjiData(json.loads(data[2]), json.loads(data[3]), json.loads(data[4]))
 
 def print_kanji(kanji, freq_map, search_anki: bool):
     MAX_ANKI_RESULTS = 5
@@ -84,20 +80,26 @@ def print_combinations(combinations, freq_map, search_anki: bool = False, max: i
 def main():
     args = get_args()
 
-    #with open("kanji_freq/jpdb/kanji_meta_bank_1.json") as f:
-    with open("kanji_freq/aozora/kanji_meta_bank_1.json") as f:
+    with open(args.sort_file) as f:
         freq_list = json.load(f)
-    freq_map = to_freq_map(freq_list)
+    if args.sort_file_is_freq_map:
+        freq_map = freq_list
+    else:
+        freq_map = to_freq_map(freq_list)
 
     with sqlite3.connect("kanjivg.db") as conn:
         cur = conn.cursor()
         data = get_kanjivg_data(cur, args.kanji)
-        print("decomposition:", json_to_str(data.decomposition, indent=2))
-        print()
-        print_kanji(args.kanji, freq_map, not args.do_not_search_anki)
-        print_components(data.components)
-        print()
-        print_combinations(data.combinations, freq_map, not args.do_not_search_anki, args.max)
+        if data is None:
+            print("Could not find kanjivg data.")
+        else:
+            if args.verbose:
+                print("decomposition:", json_to_str(data.decomposition, indent=2))
+                print()
+            print_kanji(args.kanji, freq_map, not args.do_not_search_anki)
+            print_components(data.components)
+            print()
+            print_combinations(data.combinations, freq_map, not args.do_not_search_anki, args.max)
 
 
 if __name__ == "__main__":
