@@ -41,8 +41,10 @@ including the frequency dictionaries used, and word field in Anki.
 
     Files downloaded from https://github.com/MarvNC/yomichan-dictionaries#kanji-frequency
 
-2.  Download the latest xml file from https://github.com/KanjiVG/kanjivg/releases
-    (looks like `kanjivg-???.xml.gz`), and rename it to `kanjivg.xml`
+2.  Create the xml file by running:
+    ```
+    python3 kvg.py release
+    ```
 
 3.  Run `python3 gen_db.py`
 4.  Done (do whatever with the generated database, and you can use `search.py` now)
