@@ -3,7 +3,7 @@ import sqlite3
 import argparse
 import urllib.request
 
-from gen_db import find_all_components
+from gen_db import KanjiData, json_to_str
 from sort_kanji import to_freq_map
 
 
@@ -32,12 +32,13 @@ def get_args():
     parser.add_argument("-m", "--max", type=int, default=20)
     return parser.parse_args()
 
-def print_decompositions(cur, kanji):
-    SQL = "SELECT * FROM decompositions WHERE element = ?"
-    decomps = cur.execute(SQL, kanji).fetchall()
-    for id, kanji, json_str in decomps:
-        json_data = json.loads(json_str)
-        print(json.dumps(json_data, indent=2, ensure_ascii=False))
+def get_kanjivg_data(cur, kanji):
+    SQL = "SELECT * FROM kanjivg WHERE element = ?"
+    data_list = cur.execute(SQL, kanji).fetchall()
+    if len(data_list) > 1:
+        print(f"Found more than one entry in kanjivg for {kanji}?")
+    data = data_list[0]
+    return KanjiData(json.loads(data[2]), json.loads(data[3]), json.loads(data[4]))
 
 def print_kanji(kanji, freq_map, search_anki: bool):
     MAX_ANKI_RESULTS = 5
@@ -64,34 +65,20 @@ def print_kanji(kanji, freq_map, search_anki: bool):
             print_values.append("Cannot find kanji in collection")
     print(*print_values)
 
-def print_combinations(cur, kanji, freq_map, search_anki: bool = False, max: int=20):
-    SQL = "SELECT * FROM combinations WHERE component = ?"
+def print_components(components):
+    if components:
+        print(" ".join(components))
+    else:
+        print("No components found.")
 
-    combs = cur.execute(SQL, kanji).fetchall()
-    assert len(combs) <= 1
-    for _, kanji, json_str in combs:
-        json_data = json.loads(json_str)
-        for i, kanji in enumerate(json_data):
-            sort_value = freq_map.get(kanji, None)
-            print_kanji(kanji, freq_map, search_anki and i < max)
 
+def print_combinations(combinations, freq_map, search_anki: bool = False, max: int=20):
+    for i, kanji in enumerate(combinations):
+        print_kanji(kanji, freq_map, search_anki and i < max)
 
         #print(json.dumps(json_data, indent=2, ensure_ascii=False))
-    if len(combs) == 0:
+    if len(combinations) == 0:
         print("Not a part of any other kanji.")
-
-def print_components(cur, kanji):
-    SQL = "SELECT * FROM components WHERE kanji = ?"
-
-    combs = cur.execute(SQL, kanji).fetchall()
-    for _, kanji, json_str in combs:
-        json_data = json.loads(json_str)
-        print(" ".join(json_data))
-
-        #print(json.dumps(json_data, indent=2, ensure_ascii=False))
-    if len(combs) == 0:
-        print("Cannot find components.")
-
 
 
 def main():
@@ -102,14 +89,15 @@ def main():
         freq_list = json.load(f)
     freq_map = to_freq_map(freq_list)
 
-    with sqlite3.connect("decompositions.db") as conn:
+    with sqlite3.connect("kanjivg.db") as conn:
         cur = conn.cursor()
-        print_decompositions(cur, args.kanji)
+        data = get_kanjivg_data(cur, args.kanji)
+        print("decomposition:", json_to_str(data.decomposition, indent=2))
         print()
         print_kanji(args.kanji, freq_map, not args.do_not_search_anki)
-        print_components(cur, args.kanji)
+        print_components(data.components)
         print()
-        print_combinations(cur, args.kanji, freq_map, not args.do_not_search_anki, args.max)
+        print_combinations(data.combinations, freq_map, not args.do_not_search_anki, args.max)
 
 
 if __name__ == "__main__":

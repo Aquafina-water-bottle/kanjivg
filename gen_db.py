@@ -1,6 +1,7 @@
 from kvg_lookup import canonicalId, readXmlFile
 from kanjivg import Kanji, StrokeGr, Stroke
 from sort_kanji import to_freq_map, sort_kanji
+from dataclasses import dataclass
 
 import json
 import sqlite3
@@ -8,6 +9,25 @@ from typing import Any
 from collections import defaultdict
 
 # select * from decompositions where data like '%隷%'
+
+
+def json_to_str(j, indent=None):
+    return json.dumps(j, ensure_ascii=False, indent=indent)
+
+@dataclass
+class KanjiData:
+    decomposition: dict[str, Any]
+    components: list[str] # in
+    combinations: list[str] # out
+
+    def __repr__(self):
+        data = {
+            "decomposition": self.decomposition,
+            "components": self.components,
+            "combinations": self.combinations,
+        }
+        return json_to_str(data)
+
 
 def json_summary(c: Kanji) -> dict[str, Any] | None:
     strokes = c.strokes
@@ -53,70 +73,34 @@ def find_xml_id(id, files):
     raise RuntimeError(f"Character {id} ({chr(int(id, 16))}) not found.\n")
 
 
-def init_decomps_table(conn: sqlite3.Connection):
+def init_table(conn: sqlite3.Connection):
     cur = conn.cursor()
 
-    DROP_TABLE_SQL = "DROP TABLE IF EXISTS decompositions"
+    DROP_TABLE_SQL = "DROP TABLE IF EXISTS kanjivg"
     cur.execute(DROP_TABLE_SQL)
 
+    # decomposition is of type json object
+    # components, combinations is of type json array
+    # they both can be empty, i.e. {} or []
+    # but CANNOT be null
     CREATE_TABLE_SQL = """
-        CREATE TABLE decompositions (
+        CREATE TABLE kanjivg (
             id integer PRIMARY KEY NOT NULL,
             element text NOT NULL,
-            data text NOT NULL
+            decomposition text NOT NULL,
+            components text NOT NULL,
+            combinations text NOT NULL
        );
     """
     cur.execute(CREATE_TABLE_SQL)
 
     CREATE_IDX_SQL = f"""
-        CREATE INDEX idx ON decompositions(element);
+        CREATE INDEX idx ON kanjivg(element);
     """
     cur.execute(CREATE_IDX_SQL)
     cur.close()
 
 
-def init_combinations_table(conn: sqlite3.Connection):
-    cur = conn.cursor()
-
-    DROP_TABLE_SQL = "DROP TABLE IF EXISTS combinations"
-    cur.execute(DROP_TABLE_SQL)
-
-    CREATE_TABLE_SQL = """
-        CREATE TABLE combinations (
-            id integer PRIMARY KEY NOT NULL,
-            component text NOT NULL,
-            data text NOT NULL
-       );
-    """
-    cur.execute(CREATE_TABLE_SQL)
-
-    CREATE_IDX_SQL = f"""
-        CREATE INDEX idx2 ON combinations(component);
-    """
-    cur.execute(CREATE_IDX_SQL)
-    cur.close()
-
-
-def init_components_table(conn: sqlite3.Connection):
-    cur = conn.cursor()
-
-    DROP_TABLE_SQL = "DROP TABLE IF EXISTS components"
-    cur.execute(DROP_TABLE_SQL)
-
-    CREATE_TABLE_SQL = """
-        CREATE TABLE components (
-            id integer PRIMARY KEY NOT NULL,
-            kanji text NOT NULL,
-            data text NOT NULL
-       );
-    """
-    cur.execute(CREATE_TABLE_SQL)
-
-    CREATE_IDX_SQL = f"""
-        CREATE INDEX idx3 ON components(kanji);
-    """
-    cur.execute(CREATE_IDX_SQL)
-    cur.close()
 
 def find_all_components(summary: dict[str, Any], ignore_element: bool=True) -> list[str]:
     # traverses the tree to find the top most "element" values, if they exist
@@ -139,20 +123,18 @@ def find_all_components(summary: dict[str, Any], ignore_element: bool=True) -> l
 
 
 def main():
-    INSERT_ROW_SQL = "INSERT INTO decompositions (element, data) VALUES (?,?)"
-    INSERT_ROW2_SQL = "INSERT INTO combinations (component, data) VALUES (?,?)"
-    INSERT_ROW3_SQL = "INSERT INTO components (kanji, data) VALUES (?,?)"
+    data: dict[str, KanjiData] = {}
     combinations = defaultdict(list)
+
+    INSERT_ROW_SQL = "INSERT INTO kanjivg (element, decomposition, components, combinations) VALUES (?,?,?,?)"
 
     #with open("kanji_freq/jpdb/kanji_meta_bank_1.json") as f:
     with open("kanji_freq/aozora/kanji_meta_bank_1.json") as f:
         freq_list = json.load(f)
     freq_map = to_freq_map(freq_list)
 
-    with sqlite3.connect("decompositions.db") as conn:
-        init_decomps_table(conn)
-        init_combinations_table(conn)
-        init_components_table(conn)
+    with sqlite3.connect("kanjivg.db") as conn:
+        init_table(conn)
         cur = conn.cursor()
 
         files = readXmlFile("./kanjivg.xml")
@@ -168,18 +150,22 @@ def main():
                 for component in components:
                     combinations[component].append(element)
 
-                cur.execute(INSERT_ROW_SQL, (element, json.dumps(summary, ensure_ascii=False)))
-                cur.execute(INSERT_ROW3_SQL, (element, json.dumps(components, ensure_ascii=False)))
+                data[element] = KanjiData(summary, components, [])
 
         for component, combs in combinations.items():
-            sorted_combs = sort_kanji(combs, freq_map)
-            cur.execute(INSERT_ROW2_SQL, (component, json.dumps(sorted_combs, ensure_ascii=False)))
+            if component not in data:
+                print(f"component {component} not in original data")
+                data[component] = KanjiData({}, [], [])
+            sorted_combinations = sort_kanji(combs, freq_map)
+            data[component].combinations = sorted_combinations
+
+        for element, kanji_data in data.items():
+            assert kanji_data.decomposition is not None
+            assert kanji_data.components is not None
+            assert kanji_data.combinations is not None
+            cur.execute(INSERT_ROW_SQL, (element, json_to_str(kanji_data.decomposition), json_to_str(kanji_data.components), json_to_str(kanji_data.combinations)))
 
         cur.close()
-
-    # summary = find_xml("夜", files)
-    #summary = find_xml("栗", files)
-    #print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 if __name__ == "__main__":
     main()
