@@ -1,7 +1,9 @@
 from kvg_lookup import canonicalId, readXmlFile
 from kanjivg import Kanji, StrokeGr, Stroke
-from sort_kanji import to_freq_map, sort_kanji
-from dataclasses import dataclass
+from util import json_to_str
+from utils import listSvgFiles, SvgFileInfo
+from kanji_data import KanjiData
+
 
 import json
 import sqlite3
@@ -11,31 +13,10 @@ from collections import defaultdict
 # select * from decompositions where data like '%隷%'
 
 
-def json_to_str(j, indent=None):
-    return json.dumps(j, ensure_ascii=False, indent=indent)
-
-@dataclass
-class KanjiData:
-    decomposition: dict[str, Any]
-    components: list[str] # in
-    combinations: list[str] # out
-
-    def __repr__(self):
-        data = {
-            "decomposition": self.decomposition,
-            "components": self.components,
-            "combinations": self.combinations,
-        }
-        return json_to_str(data)
-
-
 def json_summary(c: Kanji) -> dict[str, Any] | None:
     strokes = c.strokes
     if strokes is not None:
         return json_group_summary(strokes)
-        # result["element"] = strokes.element
-        # result["groups"] = json_group_summary(strokes)
-
     return None
 
 
@@ -65,6 +46,17 @@ def find_xml(kanji_str: str, files) -> dict[str, Any] | None:
     id = canonicalId(kanji_str)
     return find_xml_id(id, files)
 
+def find_svg_id(id, all_svg_files: list[SvgFileInfo]) -> SvgFileInfo:
+    # finds first file that isn't a variant
+    svg_files = [f for f in all_svg_files if f.id == id]
+    for svg_file in svg_files:
+        if not hasattr(svg_file, "variant"): # non-variant
+            return svg_file
+        #(f.path, f.read())
+    #if len(svg_files) == 0:
+    #    return None
+    return svg_files[0]
+
 
 def find_xml_id(id, files):
     data = files.get(id, None)
@@ -87,9 +79,13 @@ def init_table(conn: sqlite3.Connection):
         CREATE TABLE kanjivg (
             id integer PRIMARY KEY NOT NULL,
             element text NOT NULL,
+            svg text NOT NULL,
             decomposition text NOT NULL,
             components text NOT NULL,
-            combinations text NOT NULL
+            combinations text NOT NULL,
+            rank integer,
+            occurrences integer,
+            cumulative_percent real
        );
     """
     cur.execute(CREATE_TABLE_SQL)
@@ -122,48 +118,70 @@ def find_all_components(summary: dict[str, Any], ignore_element: bool=True) -> l
     return result
 
 
+def override_data(data):
+    OVERRIDE_FILE = "custom.json"
+    with open(OVERRIDE_FILE) as f:
+        json_data = json.load(f)
+    for key, value in json_data.items():
+        for column, col_val in value.items():
+            if column == "combinations":
+                data[key].combinations.extend(col_val)
+            else:
+                setattr(data[key], column, col_val)
+
+
+
+
 def main():
     data: dict[str, KanjiData] = {}
     combinations = defaultdict(set)
 
-    INSERT_ROW_SQL = "INSERT INTO kanjivg (element, decomposition, components, combinations) VALUES (?,?,?,?)"
+    INSERT_ROW_SQL = "INSERT INTO kanjivg (element, svg, decomposition, components, combinations) VALUES (?,?,?,?,?)"
 
-    #with open("kanji_freq/jpdb/kanji_meta_bank_1.json") as f:
-    with open("kanji_freq/aozora/kanji_meta_bank_1.json") as f:
-        freq_list = json.load(f)
-    freq_map = to_freq_map(freq_list)
+    # parse gigantic xml file containing all kanjis into summary and components
+    files = readXmlFile("./kanjivg.xml")
+    all_svg_files = listSvgFiles("./kanji/")
+    for key in files.keys():
+        id = canonicalId(key)
+        summary = find_xml_id(id, files)
+        svg_file = find_svg_id(id, all_svg_files)
+        with open(svg_file.path) as f:
+            svg_file_contents = f.read()
+        if summary is not None:
+            element = summary.get("element", None)
+            if element is None:
+                print(f"why does {summary} not have a base element")
+                continue
+
+            components = find_all_components(summary)
+            # backfills combinations
+            for component in components:
+                combinations[component].add(element)
+
+            data[element] = KanjiData(svg_file_contents, summary, components, [])
+
+    # sets combinations for each kanji
+    for component, combs in combinations.items():
+        if component not in data:
+            print(f"component {component} not in original data")
+            data[component] = KanjiData("", {}, [], [])
+        if component in combs:
+            combs.remove(component) # so it doesn't repeat itself
+        #data[component].combinations = sort_kanji(combs, freq_map) if freq_map else list(combs)
+        data[component].combinations = list(combs)
+
+    # reads custom.json to override any specific entries
+    override_data(data)
 
     with sqlite3.connect("kanjivg.db") as conn:
         init_table(conn)
         cur = conn.cursor()
 
-        files = readXmlFile("./kanjivg.xml")
-        for key in files.keys():
-            summary = find_xml(key, files)
-            if summary is not None:
-                element = summary.get("element", None)
-                if element is None:
-                    print(f"why does {summary} not have a base element")
-                    continue
-
-                components = find_all_components(summary)
-                for component in components:
-                    combinations[component].add(element)
-
-                data[element] = KanjiData(summary, components, [])
-
-        for component, combs in combinations.items():
-            if component not in data:
-                print(f"component {component} not in original data")
-                data[component] = KanjiData({}, [], [])
-            sorted_combinations = sort_kanji(combs, freq_map)
-            data[component].combinations = sorted_combinations
-
         for element, kanji_data in data.items():
             assert kanji_data.decomposition is not None
             assert kanji_data.components is not None
             assert kanji_data.combinations is not None
-            cur.execute(INSERT_ROW_SQL, (element, json_to_str(kanji_data.decomposition), json_to_str(kanji_data.components), json_to_str(kanji_data.combinations)))
+            cur.execute(INSERT_ROW_SQL, (element, kanji_data.svg, json_to_str(kanji_data.decomposition), json_to_str(kanji_data.components), json_to_str(kanji_data.combinations)))
 
         cur.close()
 
