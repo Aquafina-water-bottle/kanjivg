@@ -37,7 +37,7 @@ def invoke(action, **params):
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("kanji", type=str)
+    parser.add_argument("kanji", type=str, nargs="+")
     parser.add_argument("-a", "--do-not-search-anki", action="store_true")
     parser.add_argument("-m", "--max", type=int, default=20)
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -109,23 +109,24 @@ def main():
 
     with sqlite3.connect("kanjivg.db") as conn:
         cur = conn.cursor()
-        row = get_row_data(cur, args.kanji)
-        if row is None:
-            print("Could not find row data.")
-            return
+        for kanji in args.kanji:
+            row = get_row_data(cur, kanji)
+            if row is None:
+                print(f"{kanji}: Could not find row data.")
+                continue
 
-        data = row_to_kanjivg_data(row)
-        if data is None:
-            print("Could not find kanjivg data.")
-            return
+            data = row_to_kanjivg_data(row)
+            if data is None:
+                print(f"{kanji}: Could not find kanjivg data.")
+                continue
 
-        if args.verbose:
-            print("decomposition:", json_to_str(data.decomposition, indent=2))
+            if args.verbose:
+                print(f"{kanji} decomposition:", json_to_str(data.decomposition, indent=2))
+                print()
+            print_kanji(kanji, freq_map, not args.do_not_search_anki)
+            print_components(data.components)
             print()
-        print_kanji(args.kanji, freq_map, not args.do_not_search_anki)
-        print_components(data.components)
-        print()
-        print_combinations(data.combinations, freq_map, not args.do_not_search_anki, args.max)
+            print_combinations(data.combinations, freq_map, not args.do_not_search_anki, args.max)
 
 
 if __name__ == "__main__":
